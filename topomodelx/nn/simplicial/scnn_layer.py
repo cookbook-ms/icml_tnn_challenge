@@ -5,13 +5,14 @@ from topomodelx.base.conv import Conv
 class SCNNLayer(torch.nn.Module):
   """Layer of a Simplicial Convolutional Neural Network (SCNN). 
   
-  Implementation of the SCNN layer proposed
+  Implementation of the SCNN layer.
 
   Notes
   -----
   
   References
   ----------
+  [Yang et. al : SIMPLICIAL CONVOLUTIONAL NEURAL NETWORKS (2022)](https://arxiv.org/pdf/2110.02585.pdf)
   
   Parameters
   ----------
@@ -25,8 +26,7 @@ class SCNNLayer(torch.nn.Module):
       the corresponding convolution is not performed 
     - down: for the lower convolutions
     - up: for the upper convolutions 
-  simplex_level : int
-      on which simplex level, the convolution is operated, e.g., 0: nodes, 1: edge, 2: triangle
+
   """
   def __init__(self,
                in_channels,
@@ -78,7 +78,12 @@ class SCNNLayer(torch.nn.Module):
     r""" aggregation normalization 
     """
     neighborhood_size = torch.sum(conv_operator.to_dense(), dim=1)
-    x = torch.einsum("i,ijk->ijk ", 1 / neighborhood_size, x)
+    neighborhood_size_inv = 1/neighborhood_size
+    neighborhood_size_inv[~(torch.isfinite(neighborhood_size_inv))] = 0
+    
+    x = torch.einsum("i,ij->ij ", neighborhood_size_inv, x)
+    x[~torch.isfinite(x)] = 0
+    return x 
     
   def update(self, x):
       """Update embeddings on each cell (step 4).
@@ -131,24 +136,26 @@ class SCNNLayer(torch.nn.Module):
     ----------
     x: torch.Tensor, shape=[n_simplex,in_channels]
       Inpute features on the simplices (which can be nodes, edges, triangles, etc.)
+
     laplacian: torch.sparse
       shape = [n_simplices,n_simplices]
       The Hodge Laplacian matrix 
         - can also be adjacency matrix 
         - lower part 
         - upper part 
-    simplex_level: int 
-      The order of the simplices on which the learning is performed 
-        0: nodes
-        1: edges
-        2: triangles.... 
         
     Returns
     -------
+    _ : torch.Tensor, shape=[n_edges, channels]
+      Output features on the edges of the simplical complex.
     """
-    num_simplices,num_channels = x.shape 
+
+    num_simplices,_ = x.shape 
+
     identity = torch.eye(num_simplices)
+
     x_identity = torch.unsqueeze(identity@x,2)
+
     if self.conv_order_down > 0 and self.conv_order_up > 0:
       x_down = self.chebyshev_conv(laplacian_down, self.conv_order_down, x)
       x_up = self.chebyshev_conv(laplacian_up, self.conv_order_up, x)

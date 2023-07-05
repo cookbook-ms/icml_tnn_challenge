@@ -6,40 +6,50 @@ class SCCNNLayer(torch.nn.Module):
   
   Parameters
   ----------
-  in_channels: tuple 
+  in_channels: tuple of int
     dimensions of input features on nodes, edges, and triangles
-  out_channels: tuple 
+  out_channels: tuple of int
     dimensions of output features on ndoes, edges, and triangles 
-    
   sc_order: int 
     e.g., 2   
+
   """
   def __init__(self,in_channels,out_channels, conv_order, sc_order, aggr_norm = False, update_func = None, initialization="xavier_normal"):
     super().__init__()
+
     in_channels_0,in_channels_1,in_channels_2 = in_channels
     out_channels_0,out_channels_1,out_channels_2 = out_channels 
+
     self.in_channels_0 = in_channels_0 
     self.in_channels_1 = in_channels_1
     self.in_channels_2 = in_channels_2
     self.out_channels_0 = out_channels_0 
     self.out_channels_1 = out_channels_1
     self.out_channels_2 = out_channels_2
+
     self.conv_order = conv_order 
     self.sc_order = sc_order
+
     self.aggr_norm = aggr_norm 
     self.update_func = update_func
     self.initialization = initialization
+
     assert initialization in ["xavier_uniform", "xavier_normal"]
     assert self.conv_order > 0
 
     self.weight_0 = Parameter(torch.Tensor(self.in_channels_0, self.out_channels_0, 1+conv_order + 1+conv_order))
+
     self.weight_1 = Parameter(torch.Tensor(self.in_channels_1, self.out_channels_1, 1+conv_order + 1+conv_order+conv_order + 1+conv_order))
     
+    # determine the third dimensions of the weights
+    # because when SC order is larger than 2, there are lower and upper parts for L_2; otherwise, L_2 contains only the lower part 
     if sc_order > 2:
       self.weight_2 = Parameter(torch.Tensor(self.in_channels_2, self.out_channels_2, 1+conv_order + 1+conv_order+conv_order))
     elif sc_order == 2:
       self.weight_2 = Parameter(torch.Tensor(self.in_channels_2, self.out_channels_2, 1+conv_order + 1+conv_order))
-    
+      
+    self.reset_parameters()
+
   def reset_parameters(self, gain=1.414):
     r"""Reset learnable parameters.
 
@@ -70,7 +80,6 @@ class SCCNNLayer(torch.nn.Module):
   def aggr_norm_func(self, conv_operator, x):
     r""" aggregation normalization 
     """
-
     neighborhood_size = torch.sum(conv_operator.to_dense(), dim=1)
     neighborhood_size_inv = 1/neighborhood_size
     neighborhood_size_inv[~(torch.isfinite(neighborhood_size_inv))] = 0
@@ -169,19 +178,23 @@ class SCCNNLayer(torch.nn.Module):
 
     identity_0,identity_1,identity_2 = torch.eye(num_nodes), torch.eye(num_edges), torch.eye(num_triangles)
 
+    '''
+    convolution in the node space 
+    '''
     x_identity_0 = torch.unsqueeze(identity_0@x_0,2)
     x_0_to_0 = self.chebyshev_conv(laplacian_0,self.conv_order,x_0)
     x_0_to_0 = torch.cat((x_identity_0,x_0_to_0),2)
-    # print(x_0_to_0.shape)
     
     x_1_to_0 = torch.mm(b1,x_1)
     x_1_to_0_identity = torch.unsqueeze(identity_0@x_1_to_0,2)
     x_1_to_0 = self.chebyshev_conv(laplacian_0,self.conv_order,x_1_to_0)
     x_1_to_0 = torch.cat((x_1_to_0_identity,x_1_to_0),2)
-    # print(x_1_to_0.shape)
     
     x_0_all = torch.cat((x_0_to_0,x_1_to_0),2)
 
+    '''
+    convolution in the edge space 
+    '''
     x_identity_1 = torch.unsqueeze(identity_1@x_1,2)
     x_1_down = self.chebyshev_conv(laplacian_down_1,self.conv_order,x_1)
     x_1_up = self.chebyshev_conv(laplacian_up_1,self.conv_order,x_1)
@@ -199,19 +212,11 @@ class SCCNNLayer(torch.nn.Module):
 
     x_1_all = torch.cat((x_0_to_1,x_1_to_1,x_2_to_1),2)
 
-    ##################
-    # x_identity_2 = torch.unsqueeze(identity_2@x_2,2)
-    # x_2 = self.chebyshev_conv(laplacian_2,self.conv_order,x_2)
-    # x_2_to_2 = torch.cat((x_identity_2,x_2),2)
-
-    # x_1_to_2 = torch.mm(b2.T,x_1)
-    # x_1_to_2_identity = torch.unsqueeze(identity_2@x_1_to_2,2)
-    # x_1_to_2 = self.chebyshev_conv(laplacian_2,self.conv_order,x_1_to_2)
-    # x_1_to_2 = torch.cat((x_1_to_2_identity,x_1_to_2),2)
-
-    # x_2_all = torch.cat((x_2_to_2,x_1_to_2),2)
-
+    '''
+    convolution in the face (triangle) space, depending on the SC order, the exact form maybe a little different 
+    '''
     x_identity_2 = torch.unsqueeze(identity_2@x_2,2)
+
     if self.sc_order == 2: 
       x_2 = self.chebyshev_conv(laplacian_2,self.conv_order,x_2)
       x_2_to_2 = torch.cat((x_identity_2,x_2),2)
@@ -230,15 +235,8 @@ class SCCNNLayer(torch.nn.Module):
     x_1_to_2 = torch.cat((x_1_to_2_identity,x_1_to_2),2)
 
     x_2_all = torch.cat((x_2_to_2,x_1_to_2),2)
-    # print(x_0_to_0.shape)
-    # print(torch.linalg.matrix_norm(x_0_all))
-    # print(torch.linalg.matrix_norm(x_1_all))
-    # print(torch.linalg.matrix_norm(x_2_all))
-    # print(torch.linalg.matrix_norm(x_0_to_1))
-    # print(torch.linalg.matrix_norm(x_2_to_1))
-    # print(torch.linalg.matrix_norm(x_2_to_2))
-    # print(torch.linalg.matrix_norm(x_1_to_2))
- 
+
+
     y_0 = torch.einsum('nik,iok->no',x_0_all,self.weight_0)
     y_1 = torch.einsum('nik,iok->no',x_1_all,self.weight_1)
     y_2 = torch.einsum('nik,iok->no',x_2_all,self.weight_2) 
