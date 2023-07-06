@@ -26,7 +26,24 @@ class SCNNLayer(torch.nn.Module):
       the corresponding convolution is not performed 
     - down: for the lower convolutions
     - up: for the upper convolutions 
-
+    
+    
+  Example
+  -------
+  Here we provide an example of pseudocode for SCNN layer
+  input X: [n_simplices, in_channels]
+  Lap_down, Lap_up: [n_simplices, n_simplices]
+  conv_order_down: int, e.g., 2
+  conv_order_up: int, e.g., 2
+  output Y: [n_simplices, out_channels]
+  
+  SCNN layer looks like:
+    
+    Y = torch.einsum(concat(X, Lap_down@X, Lap_down@Lap_down@X, Lap_up@X, Lap_up@Lap_up@X), weight)
+  where 
+    - weight is the trainable parameters of dimension [out_channels, in_channels, total_order]
+    - total_order = 1 + conv_order_down + conv_order_up
+    - to implement Lap_down@Lap_down@X, we consider chebyshev method to avoid matrix@matrix computation
   """
   def __init__(self,
                in_channels,

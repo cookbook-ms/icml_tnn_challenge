@@ -12,6 +12,57 @@ class SCCNNLayer(torch.nn.Module):
     dimensions of output features on ndoes, edges, and triangles 
   sc_order: int 
     e.g., 2   
+  conv_order: int
+    convolution order of the simplicial filters
+    to avoid too many parameters, we consider them to be the same 
+
+  Example
+  -------
+  Here we provide an example of pseudocode for SCCNN layer in an SC of order two
+  input X_0: [n_nodes, in_channels]
+  input X_1: [n_edges, in_channels]
+  input X_2: [n_faces, in_channels]
+  
+  graph Laplacian L_0: [n_nodes, n_nodes]
+  1-Lap_down L_1_down: [n_edges, n_edges]
+  1-Lap_up L_1_up: [n_edges, n_edges]
+  2-Lap L_2: [n_faces,n_faces]
+  1-incidence B_1: [n_nodes, n_edges]
+  2-incidence B_2: [n_edges, n_faces]
+
+  conv_order: int, e.g., 2
+  
+  output Y_0: [n_nodes, out_channels]
+  output Y_1: [n_edges, out_channels]
+  output Y_2: [n_faces, out_channels]
+  
+  SCCNN layer looks like:
+    
+    Y_0 = torch.einsum(
+      concat(
+        X_0, L_0@X_0, L_0@L_0@X_0 || 
+        B_1@X_1, B_1@L_1_down@X_1, B_1@L_1_down@L_1_down@X_1
+      ), weight_0)
+    Y_1 = torch.einsum(
+      concat(
+        B_1.T@X_1, B_1.T@L_0@X_0, B_1.T@L_0@L_0@X_0 ||
+        X_1, L_1_down@X_1, L_1_down@L_1_down@X_1, L_1_up@X_1, L_1_up@L_1_up@X_1 ||
+        B_2@X_2, B_2@L_2@X_2, B_2@L_2@L_2@X_2
+      ), weight_1)
+    Y_2 = torch.einsum(
+      concat(
+        X_2, L_2@X_2, L_2@L_2@X_2 ||
+        B_2.T@X_1, B_2.T@L_1_up@X_1, B_2.T@L_1_up@L_1_up@X_1
+      ), weight_2)
+  where 
+    - weight_0, weight_2, weight_2 are the trainable parameters of dimensions 
+      - weight_0: [out_channels, in_channels, total_order_0]
+        - total_order_0 = 1+conv_order + 1+conv_order
+      - weight_1: [out_channels, in_channels, total_order_1]
+        - total_order_1 = 1+conv_order + 1+conv_order+conv_order + 1+conv_order
+      - weight_2: [out_channels, in_channels, total_order_2]
+        - total_order_2 = 1+conv_order + 1+conv_order 
+    - to implement Lap_down@Lap_down@X, we consider chebyshev method to avoid matrix@matrix computation
 
   """
   def __init__(self,in_channels,out_channels, conv_order, sc_order, aggr_norm = False, update_func = None, initialization="xavier_normal"):
